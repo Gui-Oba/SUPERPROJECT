@@ -1,37 +1,55 @@
-// This plugin will open a window to prompt the user to enter a number, and
-// it will then create that many rectangles on the screen.
+figma.showUI(__html__, { width: 300, height: 350 });
 
-// This file holds the main code for plugins. Code in this file has access to
-// the *figma document* via the figma global object.
-// You can access browser APIs in the <script> tag inside "ui.html" which has a
-// full browser environment (See https://www.figma.com/plugin-docs/how-plugins-run).
-
-// This shows the HTML page in "ui.html".
-figma.showUI(__html__);
-
-// Calls to "parent.postMessage" from within the HTML page will trigger this
-// callback. The callback will be passed the "pluginMessage" property of the
-// posted message.
-figma.ui.onmessage =  (msg: {type: string, count: number}) => {
-  // One way of distinguishing between different types of messages sent from
-  // your HTML page is to use an object with a "type" property like this.
-  if (msg.type === 'create-shapes') {
-    // This plugin creates rectangles on the screen.
-    const numberOfRectangles = msg.count;
-
-    const nodes: SceneNode[] = [];
-    for (let i = 0; i < numberOfRectangles; i++) {
-      const rect = figma.createRectangle();
-      rect.x = i * 150;
-      rect.fills = [{ type: 'SOLID', color: { r: 1, g: 0.5, b: 0 } }];
-      figma.currentPage.appendChild(rect);
-      nodes.push(rect);
+figma.ui.onmessage = async (msg) => {
+  if (msg.type === 'get-selection') {
+    const selection = figma.currentPage.selection;
+    if (selection.length === 0) {
+      figma.notify("Select layers to clean up 🧹");
+      return;
     }
-    figma.currentPage.selection = nodes;
-    figma.viewport.scrollAndZoomIntoView(nodes);
+
+    const simplifiedLayers = selection.map(node => ({
+      id: node.id,
+      type: node.type,
+      x: Math.round(node.x),
+      y: Math.round(node.y),
+      width: node.width,
+      height: node.height,
+      name: node.name
+    }));
+
+    figma.ui.postMessage({ type: 'selection-data', layers: simplifiedLayers });
   }
 
-  // Make sure to close the plugin when you're done. Otherwise the plugin will
-  // keep running, which shows the cancel button at the bottom of the screen.
-  figma.closePlugin();
+  if (msg.type === 'apply-cleanup') {
+    const cleanupData = msg.data;
+    let count = 0;
+
+    for (const id in cleanupData) {
+      const changes = cleanupData[id];
+      const node = await figma.getNodeByIdAsync(id); // Use Async for Dynamic Page Access
+
+      if (node && "resize" in node) {
+        // Apply Name
+        node.name = changes.name;
+        
+        // Apply Size and Position
+        node.x = changes.x;
+        node.y = changes.y;
+        node.resize(changes.width, changes.height);
+
+        // Apply Color if it's a geometry node
+        if ("fills" in node && changes.color) {
+          node.fills = [{
+            type: 'SOLID',
+            color: { r: changes.color.r, g: changes.color.g, b: changes.color.b }
+          }];
+        }
+        count++;
+      }
+    }
+    figma.notify(`Cleaned up ${count} layers! ✨`);
+  }
+
+  if (msg.type === 'cancel') figma.closePlugin();
 };
